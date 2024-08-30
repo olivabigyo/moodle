@@ -24,6 +24,8 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+use core_calendar\action_factory;
+
 use mod_h5pactivity\local\manager;
 use mod_h5pactivity\local\grader;
 use mod_h5pactivity\xapi\handler;
@@ -88,6 +90,11 @@ function h5pactivity_add_instance(stdClass $data, ?mod_h5pactivity_mod_form $mfo
     // Extra fields required in grade related functions.
     $data->cmid = $data->coursemodule;
     h5pactivity_grade_item_update($data);
+
+    $completiontimeexpected = !empty($data->completionexpected) ? $data->completionexpected : null;
+    \core_completion\api::update_completion_date_event($data->coursemodule,
+        'h5pactivity', $data->id, $completiontimeexpected);
+
     return $data->id;
 }
 
@@ -119,6 +126,10 @@ function h5pactivity_update_instance(stdClass $data, ?mod_h5pactivity_mod_form $
         h5pactivity_grade_item_update($data);
     }
 
+    $completiontimeexpected = !empty($data->completionexpected) ? $data->completionexpected : null;
+    \core_completion\api::update_completion_date_event($data->coursemodule,
+        'h5pactivity', $data->id, $completiontimeexpected);
+
     return $DB->update_record('h5pactivity', $data);
 }
 
@@ -148,6 +159,9 @@ function h5pactivity_delete_instance(int $id): bool {
         $DB->delete_records_list('h5pactivity_attempts_results', 'attemptid', $attemptids);
         $DB->delete_records_list('h5pactivity_attempts', 'id', $attemptids);
     }
+
+    $cm = get_coursemodule_from_instance('h5pactivity', $id);
+    \core_completion\api::update_completion_date_event($cm->id, 'h5pactivity', $id, null);
 
     $DB->delete_records('h5pactivity', ['id' => $id]);
 
@@ -871,4 +885,33 @@ function h5pactivity_extend_settings_navigation(settings_navigation $settingsnav
  */
 function h5pactivity_is_branded(): bool {
     return true;
+}
+
+/**
+ * This function receives a calendar event and returns the action associated with it, or null if there is none.
+ *
+ * This is used by block_myoverview in order to display the event appropriately. If null is returned then the event
+ * is not displayed on the block.
+ *
+ * @param calendar_event $event
+ * @param action_factory $factory
+ * @return \core_calendar\local\event\entities\action_interface|null
+ */
+function mod_h5pactivity_core_calendar_provide_event_action(calendar_event $event, action_factory $factory) {
+    $cm = get_fast_modinfo($event->courseid)->instances['h5pactivity'][$event->instance];
+
+    $completion = new \completion_info($cm->get_course());
+
+    $completiondata = $completion->get_data($cm, false);
+
+    if ($completiondata->completionstate != COMPLETION_INCOMPLETE) {
+        return null;
+    }
+
+    return $factory->create_instance(
+            get_string('view'),
+            new moodle_url('/mod/h5pactivity/view.php', ['id' => $cm->id]),
+            1,
+            true
+    );
 }
